@@ -1,0 +1,329 @@
+---
+title: "HR_Churn_Analysis"
+author: "Marshall Krassenstein"
+date: "1/13/2021"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+  toc_collapsed: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is me fiddling around with an employee attrition dataset on my last few days at PNC.
+
+# Description
+
+Uncover the factors that lead to employee attrition and explore important questions such as ‘show me a breakdown of distance from home by job role and attrition’ or ‘compare average monthly income by education and attrition’. This is a fictional data set created by IBM data scientists.
+
+Education
+1 'Below College'
+2 'College'
+3 'Bachelor'
+4 'Master'
+5 'Doctor'
+
+EnvironmentSatisfaction
+1 'Low'
+2 'Medium'
+3 'High'
+4 'Very High'
+
+JobInvolvement
+1 'Low'
+2 'Medium'
+3 'High'
+4 'Very High'
+
+JobSatisfaction
+1 'Low'
+2 'Medium'
+3 'High'
+4 'Very High'
+
+PerformanceRating
+1 'Low'
+2 'Good'
+3 'Excellent'
+4 'Outstanding'
+
+RelationshipSatisfaction
+1 'Low'
+2 'Medium'
+3 'High'
+4 'Very High'
+
+WorkLifeBalance
+1 'Bad'
+2 'Good'
+3 'Better'
+4 'Best'
+
+## Read in Data
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(plotly)
+library(readr)
+library(devtools)
+library(caret)
+
+df <- read_csv(file='ibm_attrition_file.csv')
+
+my_PNC_theme <- theme_bw()
+my_PNC_colors = c("#0452cf", "#2c67c7", "#5a83c4", "#b0b0ac", "#e8a061", "#e88631", "#e86e05")
+my_PNC_colors_BIG = c("#0080FF","#006DD9", "#005AB2", "#2693FF", "#4CA6FF", "#73B9FF", "#b0b0ac", "#FFB973","#FFA54C","#FF9226", "#D96C00",  "#8C4600", "#B25900",  "#FF7F00")
+
+
+```
+
+# EDA
+
+## Preview Data {.tabset}
+
+### First few rows and summarize classification spread
+
+```{r}
+
+head(df)
+nrow(df)
+
+plot_ly(alpha = .7) %>%
+  add_histogram(
+    x = ~df$Attrition,
+    name = 'Employee Attrition'
+    ) %>%
+  layout(
+    title = "~15% employee churn in dataset",
+    xaxis = list(
+      title = 'Attrition',
+      zeroline = FALSE
+    ),
+    yaxis = list(
+      title = 'Count',
+      zeroline = FALSE
+    )
+  )
+
+```
+
+### Data Structure
+
+```{r}
+
+str(df)
+
+```
+
+
+## Single Variables {.tabset}
+
+### Age Distribution
+
+```{r}
+
+age_dist_plot <- ggplot(data = df, mapping = aes(x = Age)) +
+  geom_histogram(fill = my_PNC_colors[2],  
+                 line = list(color = "darkgray",
+                            width = 5),bins = 30
+                 ) +
+  labs(title = "Employees distributed by age", 
+       x = "Age",
+       y = "Count") +
+  geom_vline(xintercept = median(df$Age), col = my_PNC_colors[6]) +
+  geom_text(x = median(df$Age), y = 4000, label = "50%", col = my_PNC_colors[6], size =  3) +
+  geom_vline(xintercept = quantile(df$Age, .25), col = my_PNC_colors[6], linetype = "dashed") +
+  geom_text(x = quantile(df$Age, .25), y = -20, label = "25%", col = my_PNC_colors[6], size = 2.5) +
+    geom_vline(xintercept = quantile(df$Age, .75), col = my_PNC_colors[6], linetype = "dashed") +
+  geom_text(x = quantile(df$Age, .75), y = -20, label = "75%", col = my_PNC_colors[6], size = 2.5) +
+  my_PNC_theme
+
+ggplotly(age_dist_plot)
+
+```
+
+Attrition rates are higher among younger employees
+
+```{r}
+df_attr <- df %>% filter(Attrition=='Yes')
+
+p_age_dist <- plot_ly(alpha = .7) %>% 
+  add_histogram(x = ~df$Age,
+                name = "All Employees",
+                bingroup = 1) %>% 
+  add_histogram(x = ~df_attr$Age,
+                name = "Attrited Employees",
+                bingroup = 1) %>% 
+  layout(barmode = "overlay",
+         title = "Employee Attrition Distributed by Age",
+         xaxis = list(title = "Age",
+                      zeroline = FALSE),
+         yaxis = list(title = "Count",
+                      zeroline = FALSE))
+
+p_age_dist
+
+```
+
+### Job Satisfaction
+
+High Job Satisfaction still yields attrition but at a lower frequency.
+
+```{r warning = FALSE, message = FALSE}
+
+fig <- plot_ly(
+  type='histogram',
+  x=as.character(df$JobSatisfaction),
+  bingroup=1)
+
+fig <- fig %>% add_trace(
+  type='histogram',
+  x=as.character(df[which(df$Attrition=='Yes'),]$JobSatisfaction),
+  bingroup=1)
+
+fig <- fig %>% layout(
+  barmode="overlay",
+  bargap=0.1)
+
+fig
+
+```
+
+### Gender and Marital Status
+
+Single men and women are more likely to leave the company but age may be a confounder. Men are slightly more likely to leave than women.
+
+```{r}
+
+df %>% 
+  group_by(Gender, MaritalStatus) %>%
+  summarize(attr_pct = sum(ifelse(Attrition=='Yes', 1, 0))/n()) -> df_marital
+
+plot_ly(
+  x = df_marital$Gender,
+  y = df_marital$MaritalStatus,
+  z = df_marital$attr_pct, 
+  type='heatmap'
+)
+
+
+
+```
+
+
+## Feature Correlation
+
+```{r}
+
+library(heatmaply)
+library(ggcorrplot)
+
+num_x <- dplyr::select_if(df, is.numeric) %>%
+  select(-c(EmployeeCount, EmployeeNumber, StandardHours))
+heatmaply_cor(
+  cor(num_x),
+  xlab = "Features", 
+  ylab = "Features",
+  k_col = 2, 
+  k_row = 2
+)
+
+```
+
+
+# Prediction
+
+## Split Data
+
+```{r Split Data}
+df %>% 
+  dplyr::select(Attrition, Age, BusinessTravel, DailyRate, Department, DistanceFromHome, Education, EnvironmentSatisfaction, 
+                Gender, HourlyRate, JobInvolvement,JobLevel, JobRole, JobSatisfaction, MaritalStatus, MonthlyIncome, MonthlyRate,
+                NumCompaniesWorked, OverTime, PercentSalaryHike, PerformanceRating, RelationshipSatisfaction, StockOptionLevel,
+                TotalWorkingYears, TrainingTimesLastYear, WorkLifeBalance, YearsAtCompany, YearsInCurrentRole, YearsSinceLastPromotion,
+                YearsWithCurrManager) -> df_pred
+
+## 75% of the sample size
+smp_size <- floor(0.75 * nrow(df_pred))
+
+## set the seed to make your partition reproducible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(df_pred)), size = smp_size)
+
+train <- df_pred[train_ind, ]
+test <- df_pred[-train_ind, ]
+
+test %>% group_by(Attrition) %>% tally()
+train %>% group_by(Attrition) %>% tally()
+
+
+```
+
+## Linear Discriminant Analysis
+
+Linear Discriminant Analysis (LDA) is a feature reduction method for data with discrete classes. It is like PCA except that it takes advantage of information about the classification in the training data. It projects data into fewer dimensions by maximizing both the mean distance between the median data point of each class and minimizing the "spread" within each class. 
+
+### Normalize Data
+
+```{r message=FALSE}
+
+library(MASS)
+library(caret)
+
+# Estimate preprocessing parameters
+preproc.param <- train %>% 
+  preProcess(method = c("center", "scale"))
+# Transform the data using the estimated parameters
+train.transformed <- preproc.param %>% predict(train)
+test.transformed <- preproc.param %>% predict(test)
+
+```
+
+
+### Fit LDA formula to reduce to 1 dimension
+
+```{r}
+
+fit <- lda(Attrition ~ .,  data=train.transformed)
+# Make predictions
+predictions <- fit %>% predict(test.transformed)
+# Model accuracy
+sprintf("Accuracy: %s%%", round(mean(predictions$class==test.transformed$Attrition),4) * 100)
+
+fit
+
+ct <- table(test.transformed$Attrition, predictions$class)
+ct
+diag(prop.table(ct, 1))
+# # total percent correct
+
+```
+
+### Plot Fit
+```{r}
+
+# Predicted classes
+head(predictions$class, 6)
+# Predicted probabilities of class memebership.
+head(predictions$posterior, 6) 
+# Linear discriminants
+head(predictions$x, 3) 
+
+lda.data <- cbind(train.transformed, predict(fit)$x)
+
+plot(fit)
+
+ggplot(lda.data, aes(LD1, y=LD1+rnorm(nrow(lda.data)))) +
+  geom_point(aes(color = Attrition))
+
+```
+
+
+```{r}
+
+
+```
