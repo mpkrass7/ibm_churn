@@ -2,12 +2,14 @@
 title: "HR_Churn_Analysis"
 author: "Marshall Krassenstein"
 date: "1/13/2021"
-output: 
+output:
+  pdf_document:
+    toc: yes
   html_document:
     code_folding: hide
-    toc: true
-    toc_float: true
-  toc_collapsed: true
+    toc: yes
+    toc_float: yes
+  toc_collapsed: yes
 ---
 
 ```{r setup, include=FALSE}
